@@ -32,27 +32,76 @@ body{display:flex;flex-direction:column;align-items:center;justify-content:cente
 </style>
 <script>
 (function(){
+  // GitHub Pages project sites live under /<repo>/. Determine that base once.
+  // If an old Service Worker served the root page at /pc/ or /mobile/, cut that suffix off.
+  function appBase(){
+    var p = location.pathname || '/';
+    var m = p.match(/^(.*?)\/(?:pc|mobile)(?:\/|$)/i);
+    if(m) return (m[1] || '') + '/';
+    return p.replace(/\/+$/, '') + '/';
+  }
+  function pathVersion(){
+    var m = (location.pathname || '').match(/\/(pc|mobile)(?:\/|$)/i);
+    return m ? m[1].toLowerCase() : '';
+  }
+  var base = appBase();
+  var hereVersion = pathVersion();
+
+  function go(v){
+    var target = base + v + '/';
+    if(location.pathname === target) return; // уже на этой версии — не дописываем /pc/pc/
+    location.replace(target);
+  }
+
+  window.__zakaznoyAppBase = base;
+  document.addEventListener('DOMContentLoaded', function(){
+    var links = document.querySelectorAll('a[data-version]');
+    for(var i=0;i<links.length;i++){
+      links[i].href = base + links[i].getAttribute('data-version') + '/';
+    }
+  });
+
+  // Аварийное восстановление после старого SW: корневая страница открылась по адресу /pc/ или /mobile/.
+  var recovered = false;
+  try{ recovered = sessionStorage.getItem('zakaznoy_sw_recover') === '1'; }catch(e){}
+  if(hereVersion && !recovered && 'serviceWorker' in navigator){
+    try{ sessionStorage.setItem('zakaznoy_sw_recover','1'); }catch(e){}
+    var clear = Promise.resolve();
+    if(window.caches && caches.keys){
+      clear = caches.keys().then(function(keys){
+        return Promise.all(keys.filter(function(k){ return k.indexOf('zakaznoy-') === 0; }).map(function(k){ return caches.delete(k); }));
+      }).catch(function(){});
+    }
+    Promise.all([
+      navigator.serviceWorker.getRegistrations().then(function(regs){
+        return Promise.all(regs.map(function(r){ return r.unregister(); }));
+      }).catch(function(){}),
+      clear
+    ]).then(function(){
+      location.replace(base + hereVersion + '/?swrecover=1');
+    });
+    return;
+  }
+
   var params = new URLSearchParams(location.search);
   var forced = params.get('v');
   if (forced === 'pc' || forced === 'mobile') {
     if (forced === 'pc') localStorage.setItem('zakaznoy_v', 'pc');
     else localStorage.setItem('zakaznoy_v', 'mobile');
-    location.replace(forced === 'pc' ? 'pc/' : 'mobile/');
+    go(forced);
     return;
   }
   var saved;
   try { saved = localStorage.getItem('zakaznoy_v'); } catch(e) {}
   if (saved === 'pc' || saved === 'mobile') {
-    location.replace(saved + '/');
+    go(saved);
     return;
   }
   var ua = navigator.userAgent || '';
-  var uaData = navigator.userAgentData;
-  var mobileUA = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini|Mobile/i.test(ua);
   var coarsePointer = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
   var touch = ('ontouchstart' in window) || (navigator.maxTouchPoints || 0) > 0;
-  var isMobile = mobileUA || (coarsePointer && touch);
-  location.replace(isMobile ? 'mobile/' : 'pc/');
+  var isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini|Mobile/i.test(ua) || (coarsePointer && touch);
+  go(isMobile ? 'mobile' : 'pc');
 })();
 </script>
 </head>
@@ -64,13 +113,13 @@ body{display:flex;flex-direction:column;align-items:center;justify-content:cente
   <div class="spinner"></div>
   <noscript>
     <div class="choices">
-      <a href="pc/">Десктопная версия</a>
-      <a href="mobile/">Мобильная версия</a>
+      <a href="pc/" data-version="pc">Десктопная версия</a>
+      <a href="mobile/" data-version="mobile">Мобильная версия</a>
     </div>
   </noscript>
   <div class="choices" id="manual" style="display:none">
-    <a href="pc/">Десктопная версия</a>
-    <a href="mobile/">Мобильная версия</a>
+    <a href="pc/" data-version="pc">Десктопная версия</a>
+    <a href="mobile/" data-version="mobile">Мобильная версия</a>
   </div>
   <p class="hint" id="hint" style="display:none">Если игра открылась не в той версии — выберите её вручную</p>
   <script>
@@ -81,7 +130,8 @@ body{display:flex;flex-direction:column;align-items:center;justify-content:cente
     // офлайн-режим: сервис-воркер кэширует обе версии игры
     if('serviceWorker' in navigator && /^https?:$/.test(location.protocol)){
       window.addEventListener('load', function(){
-        navigator.serviceWorker.register('./sw.js').catch(function(){});
+        var swUrl = new URL('sw.js', window.__zakaznoyAppBase || './').href;
+        navigator.serviceWorker.register(swUrl).catch(function(){});
       });
     }
   </script>

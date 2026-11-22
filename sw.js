@@ -42,6 +42,12 @@ function abs(url){
   try{ return new URL(url, self.registration.scope).href; }catch(e){ return url; }
 }
 
+// GitHub Pages project sites use /<repo>/pc/ and /<repo>/mobile/, not /pc/ and /mobile/.
+function versionFromPath(path){
+  var m = String(path || '').match(/(^|\/)(pc|mobile)(?:\/|$)/i);
+  return m ? m[2].toLowerCase() : '';
+}
+
 function isHtml(req){
   if(req.mode === 'navigate') return true;
   const accept = req.headers.get('accept') || '';
@@ -55,8 +61,11 @@ function isHtml(req){
 function htmlFallback(req){
   let path = '/';
   try{ path = new URL(req.url).pathname; }catch(e){}
-  const scoped = path.indexOf('/mobile') === 0 ? './mobile/index.html'
-               : path.indexOf('/pc') === 0 ? './pc/index.html'
+  // Was: path.indexOf('/pc') === 0. On GitHub Pages the path is /Zakaznoy/pc/,
+  // so that check failed and the root redirect page was served again => /pc/pc/pc/...
+  const v = versionFromPath(path);
+  const scoped = v === 'mobile' ? './mobile/index.html'
+               : v === 'pc' ? './pc/index.html'
                : './index.html';
   return caches.match(abs(scoped)).then(hit => hit || caches.match(abs('./index.html')));
 }
@@ -64,6 +73,21 @@ function htmlFallback(req){
 self.addEventListener('install', event => {
   event.waitUntil((async () => {
     const cache = await caches.open(CACHE_NAME);
+    // Чистим отравленные старым SW записи: корневой index.html, сохранённый под /pc/ или /mobile/.
+    // Иначе cache.match(req) будет возвращать его даже после исправления fallback.
+    try{
+      const keys = await cache.keys();
+      await Promise.all(keys.map(async req => {
+        try{
+          if(!isHtml(req)) return;
+          if(!versionFromPath(new URL(req.url).pathname)) return;
+          const hit = await cache.match(req);
+          if(!hit) return;
+          const text = await hit.clone().text();
+          if(/location\.replace\s*\(/.test(text) && /Загрузка/.test(text)) await cache.delete(req);
+        }catch(e){}
+      }));
+    }catch(e){}
     // каждый файл кэшируем независимо: 404 одного не срывает установку
     await Promise.all(CORE.map(async url => {
       try{
@@ -143,7 +167,7 @@ self.addEventListener('fetch', event => {
     event.respondWith(networkFirst(req));
     return;
   }
-  if(/^\/(icons|pc|mobile)\//.test(url.pathname) || /\.(?:css|js|png|jpg|jpeg|svg|webp|woff2?|json)$/i.test(url.pathname)){
+  if(/^\/(?:.*\/)?(?:icons|pc|mobile)\//.test(url.pathname) || /\.(?:css|js|ico|png|jpg|jpeg|svg|webp|woff2?|json)$/i.test(url.pathname)){
     event.respondWith(staleWhileRevalidate(req));
   }
 });
