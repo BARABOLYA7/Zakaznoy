@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ru">
+<html lang="ru" data-zakaznoy-router>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
@@ -37,6 +37,23 @@ body{display:flex;flex-direction:column;align-items:center;justify-content:cente
   }
   var base = appBase();
   var hereVersion = pathVersion();
+  var isRouterDoc = !!(document.documentElement && document.documentElement.hasAttribute('data-zakaznoy-router'));
+
+  function showLoadError(){
+    document.addEventListener('DOMContentLoaded', function(){
+      var spinner = document.querySelector('.spinner');
+      if(spinner) spinner.style.display = 'none';
+      var label = document.querySelector('.logo p');
+      if(label) label.textContent = 'Версия игры не найдена на сервере';
+      var manual = document.getElementById('manual');
+      if(manual) manual.style.display = 'flex';
+      var hint = document.getElementById('hint');
+      if(hint){
+        hint.style.display = 'block';
+        hint.textContent = 'Не опубликованы папки pc/ и mobile/ в корне сайта. Загрузите их и обновите страницу.';
+      }
+    });
+  }
 
   function go(v){
     var target = base + v + '/';
@@ -55,7 +72,7 @@ body{display:flex;flex-direction:column;align-items:center;justify-content:cente
   // Аварийное восстановление после старого SW: корневая страница открылась по адресу /pc/ или /mobile/.
   var recovered = false;
   try{ recovered = sessionStorage.getItem('zakaznoy_sw_recover') === '1'; }catch(e){}
-  if(hereVersion && !recovered && 'serviceWorker' in navigator){
+  if(hereVersion && isRouterDoc && !recovered && 'serviceWorker' in navigator){
     try{ sessionStorage.setItem('zakaznoy_sw_recover','1'); }catch(e){}
     var clear = Promise.resolve();
     if(window.caches && caches.keys){
@@ -71,6 +88,12 @@ body{display:flex;flex-direction:column;align-items:center;justify-content:cente
     ]).then(function(){
       location.replace(base + hereVersion + '/?swrecover=1');
     });
+    return;
+  }
+
+  // Роутер открылся по адресу версии повторно: файл игры физически отсутствует на сервере.
+  if(hereVersion && isRouterDoc){
+    showLoadError();
     return;
   }
 
